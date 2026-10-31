@@ -8,6 +8,8 @@
     "qwen:restart": "launchctl kickstart -k gui/$(id -u)/com.anurag.local-qwen",
     "qwen:status": "launchctl list | grep local-qwen; curl -sf -m 5 http://127.0.0.1:1233/status | python3 -m json.tool || echo 'supervisor: DOWN (no status on :1233)'",
     "qwen:events": "tail -n 30 ~/Library/Logs/local-qwen-events.jsonl",
+    "qwen:maintenance:on": "touch ~/Library/Application\\ Support/local-qwen/maintenance",
+    "qwen:maintenance:off": "rm -f ~/Library/Application\\ Support/local-qwen/maintenance",
     "qwen:reload": "npm run qwen:uninstall; sleep 3; npm run qwen:install",
     "qwen:logs": "tail -f ~/Library/Logs/local-qwen.log",
     "eval:export": "node evals/chain-digest/scripts/export-vault-dataset.mjs",

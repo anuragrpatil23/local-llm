@@ -8,7 +8,9 @@ States: starting -> ready; restarting (after any failure, with backoff,
 or a planned memory recycle); failed (circuit open: too many failures,
 retries after a cooldown); paused_on_battery; paused_memory_pressure (macOS
 reports critical memory pressure, so the model stays unloaded);
-external (something else holds the engine port).
+external (something else holds the engine port); paused_maintenance (the
+MAINTENANCE_FLAG file exists: the engine keeps running for direct use, e.g.
+benchmarks, but reports not-ready so clients hold their queues).
 
 Memory: the engine caps its own wired memory and buffer cache (see
 qwen_engine.py) and the prompt cache is bounded here. On top of that the
@@ -45,6 +47,11 @@ PORT = 1234
 STATUS_PORT = 1233
 PROMPT_CACHE_SIZE = 4         # saved conversation caches (mlx_lm default: 10)
 PROMPT_CACHE_BYTES = "4GB"    # and their total size (mlx_lm default: unbounded)
+PREFILL_STEP_SIZE = 256       # prompt tokens per prefill chunk (mlx_lm default 2048). Decoding requests
+                              # wait one chunk per token: at 256 they keep ~2 tok/s during a 20k-token
+                              # prefill (0.5 at 2048) for ~8% slower time-to-first-token on the long one.
+WIRED_LIMIT_GB = 32           # engine's wired-memory cap (mlx_lm default: ~84% of RAM)
+CACHE_LIMIT_GB = 4            # engine's freed-buffer cache cap (mlx_lm default: unbounded)
 ENGINE_MEMORY_LIMIT_GB = 40   # active + cached MLX memory before an idle recycle
 PRESSURE_IDLE_AFTER = 30      # seconds of critical pressure before an idle recycle
 PRESSURE_FORCE_AFTER = 120    # ... before recycling even mid-request
@@ -60,6 +67,7 @@ CIRCUIT_COOLDOWN = 15 * 60
 LOG_DIR = Path.home() / "Library/Logs"
 STATE_DIR = Path.home() / "Library/Application Support/local-qwen"
 FAILURE_FILE = STATE_DIR / "engine-failure.json"
+MAINTENANCE_FLAG = STATE_DIR / "maintenance"
 EVENTS_FILE = LOG_DIR / "local-qwen-events.jsonl"
 
 ENGINE_URL = f"http://127.0.0.1:{PORT}"
@@ -132,10 +140,13 @@ class Supervisor:
             "HF_HUB_OFFLINE": "1",
             "PYTHONUNBUFFERED": "1",
             "QWEN_FAILURE_FILE": str(FAILURE_FILE),
+            "QWEN_WIRED_LIMIT_GB": str(WIRED_LIMIT_GB),
+            "QWEN_CACHE_LIMIT_GB": str(CACHE_LIMIT_GB),
         }
         self.proc = subprocess.Popen(
             [PYTHON, str(ROOT / "scripts/qwen_engine.py"), "--model", MODEL, "--port", str(PORT),
-             "--prompt-cache-size", str(PROMPT_CACHE_SIZE), "--prompt-cache-bytes", PROMPT_CACHE_BYTES],
+             "--prompt-cache-size", str(PROMPT_CACHE_SIZE), "--prompt-cache-bytes", PROMPT_CACHE_BYTES,
+             "--prefill-step-size", str(PREFILL_STEP_SIZE)],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
             start_new_session=True,
         )
@@ -271,7 +282,9 @@ class Supervisor:
                 fails = 0
                 if self.recycle_for_memory():
                     continue
-                if self.state != "ready":
+                if MAINTENANCE_FLAG.exists():
+                    self.set_state("paused_maintenance", "maintenance mode (npm run qwen:maintenance:off to end)")
+                elif self.state != "ready":
                     self.set_state("ready", "health ok")
             else:
                 fails += 1

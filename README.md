@@ -35,6 +35,10 @@ The engine writes what was in flight (`X-Request-Id`, `X-Job` headers) into the 
 
 The handling is deliberately generic: it does not depend on why the engine failed. (The failures seen so far were mlx-lm's Metal buffer leak on long generations, [mlx-lm#1672](https://github.com/ml-explore/mlx-lm/issues/1672); we run unpatched mlx-lm.)
 
+### Scheduling
+
+Long prompts are read in 256-token chunks (`PREFILL_STEP_SIZE`; mlx_lm default 2048), with one decode step for already-running requests between chunks. Measured with a 19k-token prompt arriving while another request was generating: at 2048 the running request fell from ~24 to 0.5 tok/s with 5s gaps; at 256 it keeps ~1.9 tok/s with gaps under 1s, and the long request's first token comes ~8% later.
+
 ### Memory
 
 `mlx_lm.server` on its own wires up to ~84% of RAM and caches freed GPU buffers without bound, which can make the whole Mac slow. Now:
@@ -54,7 +58,7 @@ The handling is deliberately generic: it does not depend on why the engine faile
  "failures_last_hour": 0, "last_failure": null}
 ```
 
-States: `starting`, `ready`, `restarting`, `failed`, `paused_on_battery`, `paused_memory_pressure`, `external`. Use `ready`, not `/v1/models`, to decide whether to send work. `GET :1234/health` is the engine's own view (200 only if the generator is alive and not stalled). It also carries `speed` (last 60s, from the engine's own step timings: `decode_tok_s` for all requests together, `avg_batch`, `decode_tok_s_per_request`, `prefill_tok_s`) and `memory_gb`.
+States: `starting`, `ready`, `restarting`, `failed`, `paused_on_battery`, `paused_memory_pressure`, `paused_maintenance`, `external`. Clients should gate on `ready`, and treat any state they don't recognise as not ready. Use `ready`, not `/v1/models`, to decide whether to send work. `GET :1234/health` is the engine's own view (200 only if the generator is alive and not stalled). It also carries `speed` (last 60s, from the engine's own step timings: `decode_tok_s` for all requests together, `avg_batch`, `decode_tok_s_per_request`, `prefill_tok_s`) and `memory_gb`.
 
 ### Commands
 
@@ -63,6 +67,7 @@ States: `starting`, `ready`, `restarting`, `failed`, `paused_on_battery`, `pause
 | `npm run qwen:status` | Supervisor state, engine health, last failure |
 | `npm run qwen:events` | Recent state changes, failures, recycles (`~/Library/Logs/local-qwen-events.jsonl`) |
 | `npm run qwen:logs` | Follow the log (`~/Library/Logs/local-qwen.log`, rotated at 10 MB x 3) |
+| `npm run qwen:maintenance:on` / `:off` | Report not-ready so clients hold their queues, while the engine stays up for direct use (benchmarks) |
 | `npm run qwen:restart` | Restart the supervisor (and engine) |
 | `npm run qwen:reload` | Reinstall the launchd job (after editing the plist) |
 | `npm run qwen:install` / `qwen:uninstall` | Load / unload the job |
