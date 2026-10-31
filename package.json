@@ -1,0 +1,23 @@
+{
+  "name": "local-llm-evals",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "qwen:install": "cp scripts/com.anurag.local-qwen.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.anurag.local-qwen.plist",
+    "qwen:uninstall": "launchctl bootout gui/$(id -u)/com.anurag.local-qwen",
+    "qwen:restart": "launchctl kickstart -k gui/$(id -u)/com.anurag.local-qwen",
+    "qwen:status": "launchctl list | grep local-qwen; curl -sf -m 5 http://127.0.0.1:1233/status | python3 -m json.tool || echo 'supervisor: DOWN (no status on :1233)'",
+    "qwen:events": "tail -n 30 ~/Library/Logs/local-qwen-events.jsonl",
+    "qwen:reload": "npm run qwen:uninstall; sleep 3; npm run qwen:install",
+    "qwen:logs": "tail -f ~/Library/Logs/local-qwen.log",
+    "eval:export": "node evals/chain-digest/scripts/export-vault-dataset.mjs",
+    "eval:serve:mlx": "node evals/chain-digest/scripts/serve-mlx.mjs",
+    "eval:mlx": "node evals/chain-digest/scripts/run-with-mlx.mjs",
+    "eval:mlx-batched": "node evals/chain-digest/scripts/run-mlx-batched.mjs",
+    "eval:run": "node evals/chain-digest/scripts/run.mjs",
+    "eval:score": "node evals/chain-digest/scripts/score.mjs",
+    "eval:compact": "node evals/chain-digest/scripts/compact-run.mjs",
+    "eval:review": "node evals/chain-digest/scripts/render-review.mjs",
+    "eval:check": "node evals/chain-digest/scripts/check-dataset.mjs"
+  }
+}

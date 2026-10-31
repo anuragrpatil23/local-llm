@@ -1,0 +1,11 @@
+# Private evaluation material is exported from the local Thinking Space vault.
+# It contains personal session content and must never be committed.
+evals/chain-digest/private/
+evals/chain-digest/runs/
+
+# Model weights (HF_HOME), ~100 GB.
+Models/
+
+__pycache__/
+node_modules/
+.DS_Store
