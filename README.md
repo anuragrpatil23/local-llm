@@ -54,7 +54,7 @@ The handling is deliberately generic: it does not depend on why the engine faile
  "failures_last_hour": 0, "last_failure": null}
 ```
 
-States: `starting`, `ready`, `restarting`, `failed`, `paused_on_battery`, `paused_memory_pressure`, `external`. Use `ready`, not `/v1/models`, to decide whether to send work. `GET :1234/health` is the engine's own view (200 only if the generator is alive and not stalled).
+States: `starting`, `ready`, `restarting`, `failed`, `paused_on_battery`, `paused_memory_pressure`, `external`. Use `ready`, not `/v1/models`, to decide whether to send work. `GET :1234/health` is the engine's own view (200 only if the generator is alive and not stalled). It also carries `speed` (last 60s, from the engine's own step timings: `decode_tok_s` for all requests together, `avg_batch`, `decode_tok_s_per_request`, `prefill_tok_s`) and `memory_gb`.
 
 ### Commands
 

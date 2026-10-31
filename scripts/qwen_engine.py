@@ -21,6 +21,7 @@ caps the freed-buffer cache.
 
 Arguments are passed through to mlx_lm.server.
 """
+import collections
 import json
 import logging
 import os
@@ -38,6 +39,7 @@ WIRED_LIMIT = int(float(os.environ.get("QWEN_WIRED_LIMIT_GB", "32")) * 2**30)
 CACHE_LIMIT = int(float(os.environ.get("QWEN_CACHE_LIMIT_GB", "4")) * 2**30)
 FAILURE_FILE = os.environ.get("QWEN_FAILURE_FILE")
 GB = 2**30
+SPEED_WINDOW = 60  # seconds of engine steps behind the speed figures in /health
 EXIT_CODE = 75
 
 started = time.time()
@@ -47,6 +49,8 @@ in_flight = {}  # request id -> {"job", "since"}
 # sleeps, so a request suspended by sleep is not mistaken for a stall.
 progress = {"last": time.monotonic(), "tokens": 0}
 generator = {}  # "instance" -> the ResponseGenerator
+steps = collections.deque()  # (monotonic time, step seconds, decode tokens, prefill tokens)
+prefill_done = {}  # uid -> prompt tokens processed so far
 dying = threading.Event()
 
 
@@ -103,6 +107,7 @@ def snapshot():
         "queued": gen.requests.qsize() if gen else 0,
         "tokens_generated": progress["tokens"],
         "last_progress_age_s": round(idle_for, 1),
+        "speed": speed(),
         "memory_gb": {
             "active": round(mx.get_active_memory() / GB, 2),
             "cache": round(mx.get_cache_memory() / GB, 2),
@@ -111,6 +116,27 @@ def snapshot():
             "cache_limit": round(CACHE_LIMIT / GB, 1),
         },
     }
+
+
+def speed():
+    """Engine speed over the last SPEED_WINDOW s, timed by the steps themselves
+    so idle time does not dilute it."""
+    cutoff = time.monotonic() - SPEED_WINDOW
+    with lock:
+        recent = [st for st in steps if st[0] >= cutoff]
+    decode = [(dt, n) for _, dt, n, _ in recent if n]
+    prefill = [(dt, n) for _, dt, _, n in recent if n]
+    if not decode and not prefill:
+        return None
+    out = {"window_s": SPEED_WINDOW}
+    if decode:
+        tokens, seconds = sum(n for _, n in decode), sum(dt for dt, _ in decode)
+        out["decode_tok_s"] = round(tokens / seconds, 1)  # all requests together
+        out["avg_batch"] = round(tokens / len(decode), 2)
+        out["decode_tok_s_per_request"] = round(tokens / seconds / (tokens / len(decode)), 1)
+    if prefill:
+        out["prefill_tok_s"] = round(sum(n for _, n in prefill) / sum(dt for dt, _ in prefill), 1)
+    return out
 
 
 def watchdog():
@@ -140,10 +166,26 @@ _batch_next = BatchGenerator.next
 
 
 def batch_next(self):
+    t0 = time.monotonic()
     prompt_responses, gen_responses = _batch_next(self)
     if prompt_responses or gen_responses:
-        progress["last"] = time.monotonic()
+        now = time.monotonic()
+        progress["last"] = now
         progress["tokens"] += len(gen_responses)
+        prefilled = 0
+        for r in prompt_responses:
+            done = r.progress[0]
+            prefilled += max(0, done - prefill_done.get(r.uid, 0))
+            if r.end_of_prompt:
+                prefill_done.pop(r.uid, None)
+            else:
+                prefill_done[r.uid] = done
+        if len(prefill_done) > 1000:  # requests cancelled mid-prefill never send end_of_prompt
+            prefill_done.clear()
+        with lock:
+            steps.append((now, now - t0, len(gen_responses), prefilled))
+            while steps and steps[0][0] < now - SPEED_WINDOW:
+                steps.popleft()
     return prompt_responses, gen_responses
 
 
